@@ -14,7 +14,13 @@ app.use(
 );
 // Configure CORS with preflight support
 const corsOptions = {
-  origin: 'https://imaginarily-unrailwayed-tyler.ngrok-free.dev',
+  origin: [
+    "http://localhost:3000",
+    "https://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://yourapp.onrender.com",
+    "https://*.ngrok-free.dev"
+  ],
   methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization'],
