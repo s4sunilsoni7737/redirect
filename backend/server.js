@@ -192,11 +192,19 @@ const sessionConfig = {
 
 // Use MongoDB for session store in production
 if (process.env.NODE_ENV === 'production') {
-  const MongoStore = require('connect-mongo');
-  sessionConfig.store = MongoStore.create({
-    mongoUrl: process.env.MONGO_URI || 'mongodb://localhost:27017/delivery_app',
-    ttl: 24 * 60 * 60 // 24 hours
-  });
+  try {
+    const MongoStore = require('connect-mongo');
+
+    sessionConfig.store = MongoStore({
+      mongoUrl: process.env.MONGO_URI,
+      collectionName: 'sessions',
+      ttl: 24 * 60 * 60 // 24 hours
+    });
+
+    console.log('✅ Using MongoDB session store');
+  } catch (err) {
+    console.warn('⚠️ MongoDB session store failed, using memory store', err.message);
+  }
 }
 
 app.use(session(sessionConfig));

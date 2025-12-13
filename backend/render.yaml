@@ -2,12 +2,49 @@ services:
   - type: web
     name: fraud-detection
     env: node
+    region: singapore  # Choose the region closest to your users
+    plan: free  # Or 'standard' for production
     buildCommand: npm install
     startCommand: node server.js
     envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false  # Set this in Render dashboard
       - key: CLOUDINARY_CLOUD_NAME
-        sync: false
+        sync: false  # Set this in Render dashboard
       - key: CLOUDINARY_API_KEY
-        sync: false
+        sync: false  # Set this in Render dashboard
       - key: CLOUDINARY_API_SECRET
-        sync: false
+        sync: false  # Set this in Render dashboard
+      - key: SESSION_SECRET
+        generateValue: true  # Auto-generate a secure secret
+      - key: ENCRYPTION_KEY
+        sync: false  # Set this in Render dashboard (should match your .env)
+    healthCheckPath: /api/health
+    autoDeploy: true  # Automatically deploy when pushing to main branch
+    
+    # Build environment variables (for build-time only if needed)
+    buildVars:
+      - key: NODE_ENV
+        value: production
+    
+    # Advanced settings
+    envSpecific:
+      nodeVersion: 18  # Specify Node.js version
+    
+    # Resource limits (adjust based on your needs)
+    resources:
+      cpu: 1
+      memoryGB: 1
+      
+    # Add a custom domain if needed
+    # customDomains:
+    #   - name: yourdomain.com
+    #     domain: yourdomain.com
+    #     type: apex
+    #   - name: www.yourdomain.com
+    #     domain: www.yourdomain.com
+    #     type: www
