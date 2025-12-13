@@ -195,15 +195,18 @@ if (process.env.NODE_ENV === 'production') {
   try {
     const MongoStore = require('connect-mongo');
 
-    sessionConfig.store = MongoStore({
+    sessionConfig.store = MongoStore.create({
       mongoUrl: process.env.MONGO_URI,
       collectionName: 'sessions',
-      ttl: 24 * 60 * 60 // 24 hours
+      ttl: 24 * 60 * 60
     });
 
     console.log('✅ Using MongoDB session store');
   } catch (err) {
-    console.warn('⚠️ MongoDB session store failed, using memory store', err.message);
+    console.warn(
+      '⚠️ MongoDB session store failed, using memory store:',
+      err.message
+    );
   }
 }
 
