@@ -78,25 +78,20 @@ app.post('/api/admin/login', async (req, res) => {
 
     console.log('LOGIN INPUT USER:', username);
     console.log('LOGIN INPUT PASS:', password);
-    console.log('ENV USER:', ADMIN.username);
-    console.log(
-      'PASS MATCH:',
-      await bcrypt.compare(password, ADMIN.passwordHash)
-    );
 
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
 
-    const userOk = username === ADMIN.username;
-    const passOk = await bcrypt.compare(password, ADMIN.passwordHash);
-
-    if (!userOk || !passOk) {
+    if (username !== ADMIN.username || password !== ADMIN.password) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     req.session.authenticated = true;
-    req.session.user = { username: ADMIN.username, role: 'admin' };
+    req.session.user = {
+      username: ADMIN.username,
+      role: 'admin'
+    };
 
     return res.json({ success: true });
 
