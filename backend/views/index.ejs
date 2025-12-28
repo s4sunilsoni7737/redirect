@@ -4,31 +4,21 @@
 <meta charset="utf-8">
 <title>Delivery Verification</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-
-<style>
-body{font-family:Arial;max-width:480px;margin:auto;padding:20px}
-#tap{background:#667eea;color:#fff;padding:30px;border-radius:15px;text-align:center;cursor:pointer}
-#status{display:none;margin-top:20px}
-</style>
 </head>
 
 <body>
-
 <h2>Delivery Verification</h2>
-
-<div id="tap">📦 Tap to Verify Delivery</div>
-<div id="status"></div>
+<button id="start">Tap to Verify</button>
+<p id="status"></p>
 
 <script>
-const tap = document.getElementById('tap');
+const start = document.getElementById('start');
 const status = document.getElementById('status');
 
-tap.onclick = async () => {
-  tap.style.display = 'none';
-  status.style.display = 'block';
-  status.innerText = 'Requesting camera...';
-
+start.onclick = async () => {
   try {
+    status.innerText = 'Requesting camera...';
+
     const stream = await navigator.mediaDevices.getUserMedia({ video:true });
     const video = document.createElement('video');
     video.srcObject = stream;
@@ -46,25 +36,48 @@ tap.onclick = async () => {
       navigator.geolocation.getCurrentPosition(res,rej);
     });
 
-    status.innerText = 'Uploading...';
+    const payload = {
+      deliveryId: new URLSearchParams(location.search).get('deliveryId'),
+      lat: loc.coords.latitude,
+      lon: loc.coords.longitude,
+      timestamp: Date.now(),
+      userAgent: navigator.userAgent
+    };
+
+    const encoder = new TextEncoder();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = encoder.encode(
+      'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6'
+    );
+
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw', key, 'AES-GCM', false, ['encrypt']
+    );
+
+    const encrypted = await crypto.subtle.encrypt(
+      { name:'AES-GCM', iv },
+      cryptoKey,
+      encoder.encode(JSON.stringify(payload))
+    );
+
+    const buffer = new Uint8Array(iv.length + encrypted.byteLength);
+    buffer.set(iv);
+    buffer.set(new Uint8Array(encrypted), iv.length);
 
     const fd = new FormData();
-    fd.append('photo', photo);
-    fd.append('deliveryId', new URLSearchParams(location.search).get('deliveryId'));
-    fd.append('lat', loc.coords.latitude);
-    fd.append('lon', loc.coords.longitude);
+    fd.append('photo', photo, 'delivery.jpg');
+    fd.append('data', new Blob([buffer]));
 
-    const r = await fetch('/api/confirm',{method:'POST',body:fd});
-    const j = await r.json();
+    status.innerText = 'Uploading...';
+    await fetch('/api/confirm', { method:'POST', body:fd });
 
-    status.innerText = j.success ? '✅ Delivery Verified' : '❌ Failed';
-  }
-  catch(err){
-    status.innerText = err.message;
-    tap.style.display='block';
+    status.innerText = '✅ Delivery Verified';
+
+  } catch (e) {
+    console.error(e);
+    status.innerText = e.message;
   }
 };
 </script>
-
 </body>
 </html>
