@@ -3,7 +3,10 @@ const express = require('express');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const fs = require('fs-extra');
+const crypto = require('crypto');
 const path = require('path');
+const session = require('express-session');
+
 const connectDB = require('./config/db');
 const { cloudinary } = require('./config/cloudinary');
 const Delivery = require('./models/Delivery');
@@ -14,57 +17,89 @@ const app = express();
 app.set('view engine','ejs');
 app.set('views',path.join(__dirname,'views'));
 
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false
+}));
+
 const upload = multer({ dest:'uploads/' });
 
-/* HOME */
-app.get('/', (req,res)=>{
-  res.render('index');
-});
+app.get('/', (req,res)=>res.render('index'));
 
-/* CONFIRM API */
-app.post('/api/confirm', upload.single('photo'), async (req,res)=>{
-  try {
-    const { deliveryId, lat, lon } = req.body;
+/* ================= CONFIRM API ================= */
 
-    if(!deliveryId) return res.status(400).json({success:false});
+app.post('/api/confirm',
+  upload.fields([{ name:'photo' },{ name:'data' }]),
+  async (req,res)=>{
+    try {
+      /* ---- decrypt ---- */
+      const encrypted = await fs.readFile(req.files.data[0].path);
+      const iv = encrypted.slice(0,12);
+      const authTag = encrypted.slice(-16);
+      const enc = encrypted.slice(12,-16);
 
-    let delivery = await Delivery.findOne({ trackingNumber: deliveryId });
-    if(!delivery){
-      delivery = await Delivery.createWithTrackingNumber({});
-    }
+      const key = Buffer.from(
+        'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6'
+      );
 
-    const result = await cloudinary.uploader.upload(req.file.path,{
-      folder:'deliveries'
-    });
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
 
-    await fs.unlink(req.file.path);
+      const decrypted = Buffer.concat([
+        decipher.update(enc),
+        decipher.final()
+      ]);
 
-    delivery.currentLocation = {
-      type:'Point',
-      coordinates:[Number(lon),Number(lat)],
-      address:`Lat ${lat}, Lng ${lon}`
-    };
+      const data = JSON.parse(decrypted.toString());
 
-    delivery.images.push({
-      url: result.secure_url,
-      publicId: result.public_id,
-      location:{
+      /* ---- find delivery ---- */
+      const delivery = await Delivery.findOne({
+        trackingNumber: data.deliveryId
+      });
+
+      if (!delivery)
+        return res.status(404).json({ error:'Delivery not found' });
+
+      /* ---- upload image ---- */
+      const uploadResult = await cloudinary.uploader.upload(
+        req.files.photo[0].path,
+        { folder:'deliveries' }
+      );
+
+      await fs.unlink(req.files.photo[0].path);
+      await fs.unlink(req.files.data[0].path);
+
+      /* ---- update ---- */
+      delivery.currentLocation = {
         type:'Point',
-        coordinates:[Number(lon),Number(lat)],
-        address:'Verified'
-      }
-    });
+        coordinates:[data.lon, data.lat],
+        address:`Lat ${data.lat}, Lng ${data.lon}`,
+        timestamp:new Date()
+      };
 
-    delivery.status='delivered';
-    await delivery.save();
+      delivery.images.push({
+        url: uploadResult.secure_url,
+        publicId: uploadResult.public_id,
+        location:{
+          type:'Point',
+          coordinates:[data.lon, data.lat],
+          address:'Verified'
+        }
+      });
 
-    res.json({success:true});
+      delivery.status = 'delivered';
+      await delivery.save();
+
+      res.json({ success:true });
+    }
+    catch(err){
+      console.error(err);
+      res.status(500).json({ error:'Internal error' });
+    }
   }
-  catch(err){
-    console.error(err);
-    res.status(500).json({success:false});
-  }
+);
+
+app.listen(process.env.PORT, ()=>{
+  console.log(`🚀 Server running on ${process.env.PORT}`);
 });
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT,()=>console.log(`🚀 Server running on ${PORT}`));
