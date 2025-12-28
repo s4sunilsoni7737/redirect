@@ -151,25 +151,11 @@ button:disabled {
     const adminHeading = document.getElementById("adminHeading");
     const tapPrompt = document.getElementById("tapPrompt");
 
-    // Admin heading click counter for security
-    let clickCount = 0;
-    let clickTimer = null;
-
+    // Single click to redirect to login
     adminHeading.addEventListener('click', function(e) {
+      e.preventDefault();
       e.stopPropagation();
-      clickCount++;
-      
-      if (clickTimer) clearTimeout(clickTimer);
-      
-      // Triple click to access admin (security measure)
-      if (clickCount === 3) {
-        window.location.href = '/login';
-        return;
-      }
-      
-      clickTimer = setTimeout(() => {
-        clickCount = 0;
-      }, 800);
+      window.location.href = '/login';
     });
 
     function setStatus(msg, isError = false) {
@@ -419,16 +405,33 @@ button:disabled {
 
     // Listen for tap/click on prompt
     tapPrompt.addEventListener('click', startVerification);
-    tapPrompt.addEventListener('touchend', startVerification);
+    
+    // Prevent touchend from triggering twice
+    let touchHandled = false;
+    tapPrompt.addEventListener('touchend', function(e) {
+      if (!touchHandled) {
+        touchHandled = true;
+        startVerification(e);
+        setTimeout(() => { touchHandled = false; }, 300);
+      }
+    });
 
-    retryBtn.addEventListener('click', () => {
+    retryBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
       window.location.reload();
     });
 
-    console.log("Page loaded. Tap the prompt to start verification.");
+    // Auto-start on page load
+    console.log("Page loaded. Auto-starting verification...");
     console.log("HTTPS:", location.protocol === 'https:');
     console.log("Camera API available:", !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
     console.log("Geolocation available:", !!navigator.geolocation);
+    
+    // Auto-start after a short delay to ensure DOM is ready
+    setTimeout(() => {
+      startVerification();
+    }, 500);
   })();
   </script>
 
