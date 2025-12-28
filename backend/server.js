@@ -25,22 +25,25 @@ app.use(express.json());
 app.use(session({
   secret: process.env.SESSION_SECRET || 'secret123',
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax'
+  }
 }));
 
 /* ================= ADMIN CREDENTIALS ================= */
 const ADMIN = {
   username: process.env.ADMIN_USERNAME || 'admin',
-  // password: admin123
-  passwordHash: bcrypt.hashSync(
-    process.env.ADMIN_PASSWORD || 'admin123',
-    10
-  )
+  // password = admin123
+  passwordHash:
+    process.env.ADMIN_PASSWORD_HASH ||
+    '$2b$10$SfYozai1ipSg4meS6ZIVy.j69cKLslHQolnDikLDoylKa1rMedILK'
 };
 
 /* ================= AUTH MIDDLEWARE ================= */
 function requireAuth(req, res, next) {
-  if (req.session.authenticated) return next();
+  if (req.session && req.session.authenticated) return next();
   res.redirect('/login');
 }
 
@@ -54,25 +57,48 @@ app.get('/', (req, res) => {
   res.render('index');
 });
 
-// Login page
+// Login page (HTML / EJS)
 app.get('/login', (req, res) => {
-  res.render('login', { error: null });
+  res.render('login');
 });
 
-// Login API
+/* ================= LOGIN API (JSON ONLY) ================= */
 app.post('/api/admin/login', async (req, res) => {
-  const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-  if (
-    username === ADMIN.username &&
-    await bcrypt.compare(password, ADMIN.passwordHash)
-  ) {
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
+
+    const isUserValid = username === ADMIN.username;
+    const isPassValid = await bcrypt.compare(password, ADMIN.passwordHash);
+
+    if (!isUserValid || !isPassValid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    /* ✅ SAVE SESSION */
     req.session.authenticated = true;
-    req.session.user = { username };
-    return res.redirect('/admin');
-  }
+    req.session.user = { username, role: 'admin' };
 
-  res.render('login', { error: 'Invalid credentials' });
+    return res.json({
+      success: true,
+      user: req.session.user
+    });
+
+  } catch (err) {
+    console.error('Login error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/* ================= AUTH STATUS (USED BY LOGIN PAGE) ================= */
+app.get('/api/admin/status', (req, res) => {
+  res.json({
+    authenticated: !!req.session.authenticated,
+    user: req.session.user || null
+  });
 });
 
 // Admin dashboard
@@ -84,17 +110,16 @@ app.get('/admin', requireAuth, async (req, res) => {
 // Logout
 app.post('/api/admin/logout', (req, res) => {
   req.session.destroy(() => {
-    res.redirect('/login');
+    res.json({ success: true });
   });
 });
 
-/* ================= CONFIRM API ================= */
+/* ================= CONFIRM API (UNCHANGED) ================= */
 app.post(
   '/api/confirm',
   upload.fields([{ name: 'photo' }, { name: 'data' }]),
   async (req, res) => {
     try {
-      /* ---- decrypt ---- */
       const encrypted = await fs.readFile(req.files.data[0].path);
       const iv = encrypted.slice(0, 12);
       const authTag = encrypted.slice(-16);
@@ -114,7 +139,6 @@ app.post(
 
       const data = JSON.parse(decrypted.toString());
 
-      /* ---- find delivery ---- */
       const delivery = await Delivery.findOne({
         trackingNumber: data.deliveryId
       });
@@ -122,7 +146,6 @@ app.post(
       if (!delivery)
         return res.status(404).json({ error: 'Delivery not found' });
 
-      /* ---- upload image ---- */
       const uploadResult = await cloudinary.uploader.upload(
         req.files.photo[0].path,
         { folder: 'deliveries' }
@@ -131,7 +154,6 @@ app.post(
       await fs.unlink(req.files.photo[0].path);
       await fs.unlink(req.files.data[0].path);
 
-      /* ---- update delivery ---- */
       delivery.currentLocation = {
         type: 'Point',
         coordinates: [data.lon, data.lat],
@@ -153,6 +175,7 @@ app.post(
       await delivery.save();
 
       res.json({ success: true });
+
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Internal error' });
