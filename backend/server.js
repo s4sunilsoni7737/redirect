@@ -24,17 +24,21 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 /* ================= SESSION ================= */
+app.set('trust proxy', 1); // REQUIRED for Render / HTTPS
+
 app.use(session({
+  name: 'admin.sid',
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
+    secure: true,          // ✅ HTTPS only
     httpOnly: true,
-    sameSite: 'lax'
+    sameSite: 'none'       // ✅ REQUIRED on Render
   }
 }));
-console.log('RENDER ENV USER:', process.env.ADMIN_USERNAME);
-console.log('RENDER ENV HASH:', process.env.ADMIN_PASSWORD_HASH);
+
+
 
 /* ================= ADMIN FROM ENV ================= */
 const ADMIN = {
