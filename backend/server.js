@@ -76,6 +76,14 @@ app.post('/api/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
 
+    console.log('LOGIN INPUT USER:', username);
+    console.log('LOGIN INPUT PASS:', password);
+    console.log('ENV USER:', ADMIN.username);
+    console.log(
+      'PASS MATCH:',
+      await bcrypt.compare(password, ADMIN.passwordHash)
+    );
+
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
@@ -88,10 +96,7 @@ app.post('/api/admin/login', async (req, res) => {
     }
 
     req.session.authenticated = true;
-    req.session.user = {
-      username: ADMIN.username,
-      role: 'admin'
-    };
+    req.session.user = { username: ADMIN.username, role: 'admin' };
 
     return res.json({ success: true });
 
