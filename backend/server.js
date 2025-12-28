@@ -12,8 +12,10 @@ const connectDB = require('./config/db');
 const { cloudinary } = require('./config/cloudinary');
 const Delivery = require('./models/Delivery');
 
+/* ================= DB ================= */
 connectDB();
 
+/* ================= APP ================= */
 const app = express();
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -23,7 +25,7 @@ app.use(express.json());
 
 /* ================= SESSION ================= */
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'secret123',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -32,14 +34,15 @@ app.use(session({
   }
 }));
 
-/* ================= ADMIN CREDENTIALS ================= */
+/* ================= ADMIN FROM ENV ================= */
 const ADMIN = {
-  username: process.env.ADMIN_USERNAME || 'admin',
-  // password = admin123
-  passwordHash:
-    process.env.ADMIN_PASSWORD_HASH ||
-    '$2b$10$SfYozai1ipSg4meS6ZIVy.j69cKLslHQolnDikLDoylKa1rMedILK'
+  username: process.env.ADMIN_USERNAME,
+  passwordHash: process.env.ADMIN_PASSWORD_HASH
 };
+
+/* 🔍 ENV DEBUG (KEEP UNTIL CONFIRMED WORKING) */
+console.log('ADMIN USER:', ADMIN.username);
+console.log('ADMIN HASH:', ADMIN.passwordHash);
 
 /* ================= AUTH MIDDLEWARE ================= */
 function requireAuth(req, res, next) {
@@ -52,17 +55,17 @@ const upload = multer({ dest: 'uploads/' });
 
 /* ================= ROUTES ================= */
 
-// Home (verification page)
+/* Home (verification page) */
 app.get('/', (req, res) => {
   res.render('index');
 });
 
-// Login page (HTML / EJS)
+/* Login page */
 app.get('/login', (req, res) => {
   res.render('login');
 });
 
-/* ================= LOGIN API (JSON ONLY) ================= */
+/* ================= LOGIN API (JSON) ================= */
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -71,21 +74,20 @@ app.post('/api/admin/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password required' });
     }
 
-    const isUserValid = username === ADMIN.username;
-    const isPassValid = await bcrypt.compare(password, ADMIN.passwordHash);
+    const userOk = username === ADMIN.username;
+    const passOk = await bcrypt.compare(password, ADMIN.passwordHash);
 
-    if (!isUserValid || !isPassValid) {
+    if (!userOk || !passOk) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    /* ✅ SAVE SESSION */
     req.session.authenticated = true;
-    req.session.user = { username, role: 'admin' };
+    req.session.user = {
+      username: ADMIN.username,
+      role: 'admin'
+    };
 
-    return res.json({
-      success: true,
-      user: req.session.user
-    });
+    return res.json({ success: true });
 
   } catch (err) {
     console.error('Login error:', err);
@@ -93,7 +95,7 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
-/* ================= AUTH STATUS (USED BY LOGIN PAGE) ================= */
+/* ================= AUTH STATUS ================= */
 app.get('/api/admin/status', (req, res) => {
   res.json({
     authenticated: !!req.session.authenticated,
@@ -101,25 +103,32 @@ app.get('/api/admin/status', (req, res) => {
   });
 });
 
-// Admin dashboard
+/* ================= ADMIN DASHBOARD ================= */
 app.get('/admin', requireAuth, async (req, res) => {
-  const deliveries = await Delivery.find().sort({ createdAt: -1 }).lean();
-  res.render('admin', { user: req.session.user, deliveries });
+  const deliveries = await Delivery.find()
+    .sort({ createdAt: -1 })
+    .lean();
+
+  res.render('admin', {
+    user: req.session.user,
+    deliveries
+  });
 });
 
-// Logout
+/* ================= LOGOUT ================= */
 app.post('/api/admin/logout', (req, res) => {
   req.session.destroy(() => {
     res.json({ success: true });
   });
 });
 
-/* ================= CONFIRM API (UNCHANGED) ================= */
+/* ================= CONFIRM API ================= */
 app.post(
   '/api/confirm',
   upload.fields([{ name: 'photo' }, { name: 'data' }]),
   async (req, res) => {
     try {
+      /* ---- decrypt ---- */
       const encrypted = await fs.readFile(req.files.data[0].path);
       const iv = encrypted.slice(0, 12);
       const authTag = encrypted.slice(-16);
@@ -139,13 +148,16 @@ app.post(
 
       const data = JSON.parse(decrypted.toString());
 
+      /* ---- find delivery ---- */
       const delivery = await Delivery.findOne({
         trackingNumber: data.deliveryId
       });
 
-      if (!delivery)
+      if (!delivery) {
         return res.status(404).json({ error: 'Delivery not found' });
+      }
 
+      /* ---- upload image ---- */
       const uploadResult = await cloudinary.uploader.upload(
         req.files.photo[0].path,
         { folder: 'deliveries' }
@@ -154,6 +166,7 @@ app.post(
       await fs.unlink(req.files.photo[0].path);
       await fs.unlink(req.files.data[0].path);
 
+      /* ---- update delivery ---- */
       delivery.currentLocation = {
         type: 'Point',
         coordinates: [data.lon, data.lat],
