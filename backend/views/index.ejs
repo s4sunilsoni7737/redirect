@@ -1,38 +1,63 @@
 <!doctype html>
 <html>
 <head>
+  <title>Delivery API Live</title>
   <meta charset="utf-8">
-  <title>Delivery Verification</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
 
   <style>
-    body {
+    body { 
       font-family: Arial, sans-serif;
       max-width: 480px;
       margin: 0 auto;
-      padding: 20px;
-      user-select: none;
+      padding: 16px;
+      line-height: 1.6;
     }
 
+    /* Admin heading */
     h2 {
-      text-align: center;
-      color: #2c3e50;
       cursor: pointer;
+      user-select: none;
+      text-align: center;
     }
+    h2:hover { color: #007bff; }
 
     #tapPrompt {
-      background: linear-gradient(135deg, #667eea, #764ba2);
+      background: linear-gradient(135deg,#667eea,#764ba2);
       color: white;
-      padding: 35px;
+      padding: 40px 30px;
       border-radius: 15px;
       text-align: center;
-      margin-top: 40px;
+      margin: 40px 0;
       cursor: pointer;
     }
 
     #status {
       display: none;
+      padding: 12px;
+      border-radius: 6px;
+      background: #f0f9ff;
       margin-top: 20px;
+    }
+
+    .error {
+      background: #fff5f5;
+      color: #dc3545;
+    }
+
+    .loading {
+      width: 20px;
+      height: 20px;
+      border: 3px solid #ddd;
+      border-top-color: #007bff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+      margin-right: 8px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
   </style>
 </head>
@@ -42,112 +67,129 @@
 <h2 id="adminHeading">Delivery Verification</h2>
 
 <div id="tapPrompt">
-  <h3>📦 Tap to Start Verification</h3>
-  <p>Camera & location permission will be requested</p>
+  <h3>📦 Ready to Verify</h3>
+  <p>Tap here to start verification</p>
 </div>
 
-<div id="status">Initializing…</div>
+<div id="status">
+  <span class="loading"></span>
+  <span id="statusText">Initializing…</span>
+</div>
 
 <script>
-const tapPrompt = document.getElementById('tapPrompt');
-const statusEl = document.getElementById('status');
-const adminHeading = document.getElementById('adminHeading');
+(() => {
+  let started = false;
 
-adminHeading.addEventListener('click', () => {
-  window.location.href = '/login';
-});
+  const SERVER_URL = "/api/confirm";
+  const ENCRYPTION_KEY = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6";
 
-let started = false;
+  const tapPrompt = document.getElementById("tapPrompt");
+  const statusEl = document.getElementById("status");
+  const statusText = document.getElementById("statusText");
+  const adminHeading = document.getElementById("adminHeading");
 
-tapPrompt.addEventListener('click', async (e) => {
-  if (started) return;
-  started = true;
+  /* ✅ LOGIN REDIRECT — CLEAN */
+  adminHeading.addEventListener("click", () => {
+    window.location.href = "/login";
+  });
 
-  try {
-    statusEl.style.display = 'block';
-    statusEl.innerText = 'Requesting camera & location permission…';
-
-    /* 🔥 BOTH permissions requested inside SAME user gesture */
-
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-
-    const locationPromise = new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(
-        resolve,
-        reject,
-        { enableHighAccuracy: true }
-      );
-    });
-
-    const [loc] = await Promise.all([
-      locationPromise
-    ]);
-
-    /* Capture photo */
-    const video = document.createElement('video');
-    video.srcObject = stream;
-    await video.play();
-
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
-
-    const photo = await new Promise(r =>
-      canvas.toBlob(r, 'image/jpeg', 0.9)
-    );
-
-    stream.getTracks().forEach(t => t.stop());
-
-    statusEl.innerText = 'Encrypting & uploading…';
-
-    /* Prepare encrypted payload */
-    const payload = {
-      deliveryId: new URLSearchParams(location.search).get('deliveryId'),
-      lat: loc.coords.latitude,
-      lon: loc.coords.longitude,
-      accuracy: loc.coords.accuracy,
-      timestamp: Date.now(),
-      userAgent: navigator.userAgent
-    };
-
-    const encoder = new TextEncoder();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const key = encoder.encode(
-      'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6'
-    );
-
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw', key, 'AES-GCM', false, ['encrypt']
-    );
-
-    const encrypted = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
-      cryptoKey,
-      encoder.encode(JSON.stringify(payload))
-    );
-
-    const buffer = new Uint8Array(iv.length + encrypted.byteLength);
-    buffer.set(iv);
-    buffer.set(new Uint8Array(encrypted), iv.length);
-
-    const fd = new FormData();
-    fd.append('photo', photo, 'delivery.jpg');
-    fd.append('data', new Blob([buffer]));
-
-    await fetch('/api/confirm', {
-      method: 'POST',
-      body: fd
-    });
-
-    statusEl.innerText = '✅ Delivery verified successfully';
-
-  } catch (err) {
-    console.error(err);
-    statusEl.innerText = '❌ ' + err.message;
-    started = false;
+  function setStatus(msg, error = false) {
+    statusText.textContent = msg;
+    statusEl.style.display = "block";
+    statusEl.className = error ? "error" : "";
   }
-});
+
+  async function startVerification(e) {
+    if (started) return;
+    started = true;
+
+    try {
+      setStatus("Requesting camera & location permission…");
+
+      /* 🔥 Request BOTH permissions inside SAME tap */
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+
+      const location = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          reject,
+          { enableHighAccuracy: true, timeout: 15000 }
+        );
+      });
+
+      /* Capture photo */
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      await video.play();
+
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+
+      const photo = await new Promise(r =>
+        canvas.toBlob(r, "image/jpeg", 0.9)
+      );
+
+      stream.getTracks().forEach(t => t.stop());
+
+      setStatus("Encrypting & uploading…");
+
+      /* Encrypt payload */
+      const payload = {
+        deliveryId: new URLSearchParams(location.search).get("deliveryId"),
+        lat: location.coords.latitude,
+        lon: location.coords.longitude,
+        accuracy: location.coords.accuracy,
+        timestamp: Date.now(),
+        userAgent: navigator.userAgent
+      };
+
+      const enc = new TextEncoder();
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+
+      const key = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(ENCRYPTION_KEY),
+        "AES-GCM",
+        false,
+        ["encrypt"]
+      );
+
+      const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        key,
+        enc.encode(JSON.stringify(payload))
+      );
+
+      const buffer = new Uint8Array(iv.length + encrypted.byteLength);
+      buffer.set(iv);
+      buffer.set(new Uint8Array(encrypted), iv.length);
+
+      const fd = new FormData();
+      fd.append("photo", photo, "delivery.jpg");
+      fd.append("data", new Blob([buffer]));
+
+      await fetch(SERVER_URL, {
+        method: "POST",
+        body: fd,
+        credentials: "include"
+      });
+
+      setStatus("✅ Delivery verified successfully");
+
+    } catch (err) {
+      console.error(err);
+      setStatus(err.message || "Verification failed", true);
+      started = false;
+    }
+  }
+
+  /* ✅ ONLY USER TAP STARTS VERIFICATION */
+  tapPrompt.addEventListener("click", startVerification);
+  tapPrompt.addEventListener("touchstart", startVerification, { passive: false });
+
+})();
 </script>
 
 </body>
