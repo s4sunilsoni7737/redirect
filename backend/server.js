@@ -6,7 +6,6 @@ const fs = require('fs-extra');
 const crypto = require('crypto');
 const path = require('path');
 const session = require('express-session');
-const bcrypt = require('bcryptjs');
 
 const connectDB = require('./config/db');
 const { cloudinary } = require('./config/cloudinary');
@@ -23,8 +22,8 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-/* ================= SESSION ================= */
-app.set('trust proxy', 1); // REQUIRED for Render / HTTPS
+/* ================= SESSION (RENDER SAFE) ================= */
+app.set('trust proxy', 1);
 
 app.use(session({
   name: 'admin.sid',
@@ -32,28 +31,23 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: true,          // ✅ HTTPS only
+    secure: true,      // Render = HTTPS
     httpOnly: true,
-    sameSite: 'none'       // ✅ REQUIRED on Render
+    sameSite: 'none'
   }
 }));
 
-
-
 /* ================= ADMIN FROM ENV ================= */
-const ADMIN = {
-  username: process.env.ADMIN_USERNAME,
-  passwordHash: process.env.ADMIN_PASSWORD_HASH
-};
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
-/* 🔍 ENV DEBUG (KEEP UNTIL CONFIRMED WORKING) */
-console.log('ADMIN USER:', ADMIN.username);
-console.log('ADMIN HASH:', ADMIN.passwordHash);
+console.log('ADMIN USER:', ADMIN_USERNAME);
+console.log('ADMIN PASS SET:', !!ADMIN_PASSWORD);
 
 /* ================= AUTH MIDDLEWARE ================= */
 function requireAuth(req, res, next) {
-  if (req.session && req.session.authenticated) return next();
-  res.redirect('/login');
+  if (req.session.authenticated) return next();
+  return res.redirect('/login');
 }
 
 /* ================= MULTER ================= */
@@ -61,44 +55,35 @@ const upload = multer({ dest: 'uploads/' });
 
 /* ================= ROUTES ================= */
 
-/* Home (verification page) */
+/* Home */
 app.get('/', (req, res) => {
   res.render('index');
 });
 
-/* Login page */
+/* Login Page */
 app.get('/login', (req, res) => {
   res.render('login');
 });
 
-/* ================= LOGIN API (JSON) ================= */
-app.post('/api/admin/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
+/* ================= LOGIN API ================= */
+app.post('/api/admin/login', (req, res) => {
+  const { username, password } = req.body;
 
-    console.log('LOGIN INPUT USER:', username);
-    console.log('LOGIN INPUT PASS:', password);
+  console.log('LOGIN INPUT USER:', username);
+  console.log('LOGIN INPUT PASS:', password);
 
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password required' });
-    }
-
-    if (username !== ADMIN.username || password !== ADMIN.password) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    req.session.authenticated = true;
-    req.session.user = {
-      username: ADMIN.username,
-      role: 'admin'
-    };
-
-    return res.json({ success: true });
-
-  } catch (err) {
-    console.error('Login error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
   }
+
+  if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  req.session.authenticated = true;
+  req.session.user = { username };
+
+  return res.json({ success: true });
 });
 
 /* ================= AUTH STATUS ================= */
@@ -134,7 +119,6 @@ app.post(
   upload.fields([{ name: 'photo' }, { name: 'data' }]),
   async (req, res) => {
     try {
-      /* ---- decrypt ---- */
       const encrypted = await fs.readFile(req.files.data[0].path);
       const iv = encrypted.slice(0, 12);
       const authTag = encrypted.slice(-16);
@@ -154,7 +138,6 @@ app.post(
 
       const data = JSON.parse(decrypted.toString());
 
-      /* ---- find delivery ---- */
       const delivery = await Delivery.findOne({
         trackingNumber: data.deliveryId
       });
@@ -163,7 +146,6 @@ app.post(
         return res.status(404).json({ error: 'Delivery not found' });
       }
 
-      /* ---- upload image ---- */
       const uploadResult = await cloudinary.uploader.upload(
         req.files.photo[0].path,
         { folder: 'deliveries' }
@@ -172,7 +154,6 @@ app.post(
       await fs.unlink(req.files.photo[0].path);
       await fs.unlink(req.files.data[0].path);
 
-      /* ---- update delivery ---- */
       delivery.currentLocation = {
         type: 'Point',
         coordinates: [data.lon, data.lat],
@@ -205,5 +186,5 @@ app.post(
 /* ================= SERVER ================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
