@@ -33,6 +33,8 @@ app.use(session({
     sameSite: 'lax'
   }
 }));
+console.log('RENDER ENV USER:', process.env.ADMIN_USERNAME);
+console.log('RENDER ENV HASH:', process.env.ADMIN_PASSWORD_HASH);
 
 /* ================= ADMIN FROM ENV ================= */
 const ADMIN = {
