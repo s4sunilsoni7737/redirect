@@ -1,129 +1,69 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>Delivery Verification</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta charset="utf-8">
+<title>Delivery Verification</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
 
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 480px;
-      margin: 0 auto;
-      padding: 20px;
-      user-select: none;
-    }
-    h2 { text-align: center; cursor: pointer; }
-    #tapPrompt {
-      background: linear-gradient(135deg,#667eea,#764ba2);
-      color: #fff;
-      padding: 30px;
-      border-radius: 15px;
-      text-align: center;
-      margin-top: 40px;
-      cursor: pointer;
-    }
-    #status {
-      display: none;
-      margin-top: 20px;
-      padding: 15px;
-      border-radius: 6px;
-      background: #f0f9ff;
-    }
-    .error { background: #fff5f5; color: #dc3545; }
-    .loading {
-      width: 20px;
-      height: 20px;
-      border: 3px solid #ddd;
-      border-top-color: #007bff;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      display: inline-block;
-      margin-right: 8px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
+<style>
+body{font-family:Arial;max-width:480px;margin:auto;padding:20px}
+#tap{background:#667eea;color:#fff;padding:30px;border-radius:15px;text-align:center;cursor:pointer}
+#status{display:none;margin-top:20px}
+</style>
 </head>
 
 <body>
 
-<h2 onclick="location.href='/login'">Delivery Verification</h2>
+<h2>Delivery Verification</h2>
 
-<div id="tapPrompt">
-  <h3>📦 Tap to Start Verification</h3>
-  <p>Camera & location permission required</p>
-</div>
-
-<div id="status">
-  <span class="loading"></span>
-  <span id="statusText">Loading...</span>
-</div>
+<div id="tap">📦 Tap to Verify Delivery</div>
+<div id="status"></div>
 
 <script>
-let started = false;
+const tap = document.getElementById('tap');
+const status = document.getElementById('status');
 
-const SERVER_URL = "/api/confirm";
-
-const tapPrompt = document.getElementById("tapPrompt");
-const statusEl = document.getElementById("status");
-const statusText = document.getElementById("statusText");
-
-function setStatus(msg, error=false){
-  statusText.textContent = msg;
-  statusEl.style.display = "block";
-  statusEl.className = error ? "error" : "";
-}
-
-async function startVerification(e){
-  if(started) return;
-  started = true;
-  e.preventDefault();
+tap.onclick = async () => {
+  tap.style.display = 'none';
+  status.style.display = 'block';
+  status.innerText = 'Requesting camera...';
 
   try {
-    tapPrompt.style.display = "none";
-    setStatus("Requesting camera...");
-
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    const video = document.createElement("video");
+    const stream = await navigator.mediaDevices.getUserMedia({ video:true });
+    const video = document.createElement('video');
     video.srcObject = stream;
     await video.play();
 
-    const canvas = document.createElement("canvas");
+    const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video,0,0);
-    const photo = await new Promise(r=>canvas.toBlob(r,"image/jpeg",0.9));
+    canvas.getContext('2d').drawImage(video,0,0);
+    const photo = await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.9));
     stream.getTracks().forEach(t=>t.stop());
 
-    setStatus("Requesting location...");
+    status.innerText = 'Requesting location...';
     const loc = await new Promise((res,rej)=>{
-      navigator.geolocation.getCurrentPosition(res,rej,{enableHighAccuracy:true});
+      navigator.geolocation.getCurrentPosition(res,rej);
     });
 
-    setStatus("Uploading...");
+    status.innerText = 'Uploading...';
 
-    const params = new URLSearchParams(location.search);
     const fd = new FormData();
-    fd.append("photo", photo);
-    fd.append("deliveryId", params.get("deliveryId"));
-    fd.append("lat", loc.coords.latitude);
-    fd.append("lon", loc.coords.longitude);
+    fd.append('photo', photo);
+    fd.append('deliveryId', new URLSearchParams(location.search).get('deliveryId'));
+    fd.append('lat', loc.coords.latitude);
+    fd.append('lon', loc.coords.longitude);
 
-    const r = await fetch(SERVER_URL,{ method:"POST", body:fd });
-    if(!r.ok) throw new Error("Server error");
+    const r = await fetch('/api/confirm',{method:'POST',body:fd});
+    const j = await r.json();
 
-    statusEl.innerHTML = "<b style='color:green'>✓ Delivery Verified</b>";
+    status.innerText = j.success ? '✅ Delivery Verified' : '❌ Failed';
   }
   catch(err){
-    console.error(err);
-    setStatus(err.message,true);
-    tapPrompt.style.display="block";
-    started=false;
+    status.innerText = err.message;
+    tap.style.display='block';
   }
-}
-
-tapPrompt.addEventListener("click", startVerification);
-tapPrompt.addEventListener("touchstart", startVerification);
+};
 </script>
 
 </body>
